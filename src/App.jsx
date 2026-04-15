@@ -152,17 +152,34 @@ export default function App() {
   const [allData, setAllData] = useState({ Sheet1: {}, Sheet2: {}, Sheet3: {} })
 
   const [selCell, setSelCell] = useState({ col: 'A', row: 1 })
+  const [selEnd, setSelEnd] = useState({ col: 'A', row: 1 })
+  const [isDragging, setIsDragging] = useState(false)
   const [editCell, setEditCell] = useState(null)
   const [editVal, setEditVal] = useState('')
+  const [splitWidth, setSplitWidth] = useState(450)
+  const [isDraggingSplitter, setIsDraggingSplitter] = useState(false)
 
   const containerRef = useRef(null)
   const editInputRef = useRef(null)
   const formulaBarRef = useRef(null)
+  const rightPaneRef = useRef(null)
+  const splitContainerRef = useRef(null)
 
   const selRef = `${selCell.col}${selCell.row}`
   const editRef = editCell ? `${editCell.col}${editCell.row}` : null
   const sheetData = allData[activeSheet] || {}
   const selCellData = sheetData[selRef] || {}
+
+  const selRange = {
+    minCol: Math.min(colIdx(selCell.col), colIdx(selEnd.col)),
+    maxCol: Math.max(colIdx(selCell.col), colIdx(selEnd.col)),
+    minRow: Math.min(selCell.row, selEnd.row),
+    maxRow: Math.max(selCell.row, selEnd.row),
+  }
+  const isMultiSel = selCell.col !== selEnd.col || selCell.row !== selEnd.row
+  const nameboxVal = isMultiSel
+    ? `${idxToCol(selRange.minCol)}${selRange.minRow}:${idxToCol(selRange.maxCol)}${selRange.maxRow}`
+    : selRef
 
   const getData = useCallback((ref) => sheetData[ref]?.v || '', [sheetData])
 
@@ -200,16 +217,38 @@ export default function App() {
     setEditVal(initial !== null ? initial : (sheetData[ref]?.v || ''))
   }, [sheetData])
 
-  const move = useCallback((dc, dr) => {
-    setSelCell(prev => ({
-      col: idxToCol(Math.max(0, Math.min(NUM_COLS - 1, colIdx(prev.col) + dc))),
-      row: Math.max(1, Math.min(NUM_ROWS, prev.row + dr)),
-    }))
+  const move = useCallback((dc, dr, extend = false) => {
+    if (extend) {
+      setSelEnd(prev => ({
+        col: idxToCol(Math.max(0, Math.min(NUM_COLS - 1, colIdx(prev.col) + dc))),
+        row: Math.max(1, Math.min(NUM_ROWS, prev.row + dr)),
+      }))
+    } else {
+      setSelCell(prev => {
+        const next = {
+          col: idxToCol(Math.max(0, Math.min(NUM_COLS - 1, colIdx(prev.col) + dc))),
+          row: Math.max(1, Math.min(NUM_ROWS, prev.row + dr)),
+        }
+        setSelEnd(next)
+        return next
+      })
+    }
   }, [])
 
   const goTo = useCallback((col, row) => {
     setSelCell({ col, row })
+    setSelEnd({ col, row })
     setEditCell(null)
+  }, [])
+
+  const syncScroll = useCallback((e) => {
+    const other = e.currentTarget === containerRef.current ? rightPaneRef.current : containerRef.current
+    if (other) other.scrollTop = e.currentTarget.scrollTop
+  }, [])
+
+  const startSplitDrag = useCallback((e) => {
+    e.preventDefault()
+    setIsDraggingSplitter(true)
   }, [])
 
   useEffect(() => {
@@ -221,6 +260,26 @@ export default function App() {
   }, [editCell])
 
   useEffect(() => { containerRef.current?.focus() }, [])
+
+  useEffect(() => {
+    const onMouseUp = () => setIsDragging(false)
+    window.addEventListener('mouseup', onMouseUp)
+    return () => window.removeEventListener('mouseup', onMouseUp)
+  }, [])
+
+  useEffect(() => {
+    if (!isDraggingSplitter) return
+    const onMove = (e) => {
+      if (splitContainerRef.current) {
+        const rect = splitContainerRef.current.getBoundingClientRect()
+        setSplitWidth(Math.max(150, Math.min(rect.width - 100, e.clientX - rect.left)))
+      }
+    }
+    const onUp = () => setIsDraggingSplitter(false)
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+  }, [isDraggingSplitter])
 
   // Formatting shortcuts require reading current selRef and selCellData at call time
   const toggleBold   = () => setCell(selRef, { bold: !selCellData.bold })
@@ -239,10 +298,10 @@ export default function App() {
     }
 
     switch (e.key) {
-      case 'ArrowUp':    e.preventDefault(); move(0, -1); break
-      case 'ArrowDown':  e.preventDefault(); move(0, 1); break
-      case 'ArrowLeft':  e.preventDefault(); move(-1, 0); break
-      case 'ArrowRight': e.preventDefault(); move(1, 0); break
+      case 'ArrowUp':    e.preventDefault(); move(0, -1, e.shiftKey); break
+      case 'ArrowDown':  e.preventDefault(); move(0, 1, e.shiftKey); break
+      case 'ArrowLeft':  e.preventDefault(); move(-1, 0, e.shiftKey); break
+      case 'ArrowRight': e.preventDefault(); move(1, 0, e.shiftKey); break
       case 'Tab':        e.preventDefault(); move(e.shiftKey ? -1 : 1, 0); break
       case 'Enter':      e.preventDefault(); beginEdit(selRef); break
       case 'F2':         e.preventDefault(); beginEdit(selRef); break
@@ -284,6 +343,7 @@ export default function App() {
     if (editCell) commitEdit()
     setActiveSheet(name)
     setSelCell({ col: 'A', row: 1 })
+    setSelEnd({ col: 'A', row: 1 })
     setEditCell(null)
     containerRef.current?.focus()
   }
@@ -344,7 +404,7 @@ export default function App() {
 
       {/* Formula bar */}
       <div className="xls-fbar">
-        <div className="xls-namebox">{selRef}</div>
+        <div className="xls-namebox">{nameboxVal}</div>
         <div className="xls-fx">fx</div>
         <input
           ref={formulaBarRef}
@@ -357,80 +417,140 @@ export default function App() {
         />
       </div>
 
-      {/* Grid */}
-      <div
-        ref={containerRef}
-        className="xls-grid-wrap"
-        tabIndex={0}
-        onKeyDown={handleKeyDown}
-      >
-        <table className="xls-grid">
-          <colgroup>
-            <col style={{ width: ROW_HDR_W }} />
-            {COLS.map(col => <col key={col} style={{ width: COL_WIDTH }} />)}
-          </colgroup>
-          <thead>
-            <tr style={{ height: ROW_HEIGHT }}>
-              <th className="xls-hdr xls-corner" />
-              {COLS.map(col => (
-                <th key={col} className={`xls-hdr xls-col-hdr${selCell.col === col ? ' active' : ''}`}>{col}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {Array.from({ length: NUM_ROWS }, (_, i) => {
-              const row = i + 1
-              return (
-                <tr key={row} style={{ height: ROW_HEIGHT }}>
-                  <td className={`xls-hdr xls-row-hdr${selCell.row === row ? ' active' : ''}`}>{row}</td>
-                  {COLS.map(col => {
-                    const ref = `${col}${row}`
-                    const isSel = selRef === ref
-                    const isEditing = editRef === ref
-                    const cell = sheetData[ref] || {}
-                    const raw = cell.v || ''
-                    const displayVal = getDisplay(ref)
-                    const isNum = raw
-                      ? raw.startsWith('=')
-                        ? typeof evaluate(raw, getData) === 'number'
-                        : !isNaN(parseFloat(raw)) && raw.trim() !== ''
-                      : false
-                    const align = cell.align || (isNum ? 'right' : 'left')
+      {/* Grid — split into two independently-scrolling panes */}
+      <div ref={splitContainerRef} className="xls-split-container">
 
-                    return (
-                      <td
-                        key={ref}
-                        className={`xls-cell${isSel ? ' sel' : ''}`}
-                        onClick={() => { if (editCell) commitEdit(); goTo(col, row); containerRef.current?.focus() }}
-                        onDoubleClick={() => { goTo(col, row); beginEdit(ref) }}
-                      >
-                        {isEditing ? (
-                          <input
-                            ref={editInputRef}
-                            className="xls-edit-input"
-                            value={editVal}
-                            onChange={e => setEditVal(e.target.value)}
-                            onKeyDown={handleCellKeyDown}
-                            spellCheck={false}
-                          />
-                        ) : (
-                          <div className="xls-cell-text" style={{
-                            textAlign: align,
-                            fontWeight: cell.bold ? 'bold' : undefined,
-                            fontStyle: cell.italic ? 'italic' : undefined,
-                            textDecoration: cell.underline ? 'underline' : undefined,
-                          }}>
+        {/* ── Left pane ── */}
+        <div
+          ref={containerRef}
+          className="xls-grid-wrap"
+          style={{ width: splitWidth, flexShrink: 0 }}
+          tabIndex={0}
+          onKeyDown={handleKeyDown}
+          onScroll={syncScroll}
+        >
+          <table className="xls-grid">
+            <colgroup>
+              <col style={{ width: ROW_HDR_W }} />
+              {COLS.map(col => <col key={col} style={{ width: COL_WIDTH }} />)}
+            </colgroup>
+            <thead>
+              <tr style={{ height: ROW_HEIGHT }}>
+                <th className="xls-hdr xls-corner" />
+                {COLS.map(col => {
+                  const ci = colIdx(col)
+                  return <th key={col} className={`xls-hdr xls-col-hdr${ci >= selRange.minCol && ci <= selRange.maxCol ? ' active' : ''}`}>{col}</th>
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {Array.from({ length: NUM_ROWS }, (_, i) => {
+                const row = i + 1
+                return (
+                  <tr key={row} style={{ height: ROW_HEIGHT }}>
+                    <td className={`xls-hdr xls-row-hdr${row >= selRange.minRow && row <= selRange.maxRow ? ' active' : ''}`}>{row}</td>
+                    {COLS.map(col => {
+                      const ref = `${col}${row}`
+                      const ci = colIdx(col)
+                      const isAnchor = selRef === ref
+                      const isEditing = editRef === ref
+                      const inRange = ci >= selRange.minCol && ci <= selRange.maxCol && row >= selRange.minRow && row <= selRange.maxRow
+                      const cell = sheetData[ref] || {}
+                      const raw = cell.v || ''
+                      const displayVal = getDisplay(ref)
+                      const isNum = raw ? raw.startsWith('=') ? typeof evaluate(raw, getData) === 'number' : !isNaN(parseFloat(raw)) && raw.trim() !== '' : false
+                      const align = cell.align || (isNum ? 'right' : 'left')
+                      const isTopEdge = row === selRange.minRow, isBottomEdge = row === selRange.maxRow
+                      const isLeftEdge = ci === selRange.minCol, isRightEdge = ci === selRange.maxCol
+                      const s = '2px solid #1e7145', h = '1px hidden'
+                      const borderStyle = inRange ? { borderTop: isTopEdge ? s : h, borderBottom: isBottomEdge ? s : h, borderLeft: isLeftEdge ? s : h, borderRight: isRightEdge ? s : h } : {}
+                      return (
+                        <td key={ref} className={`xls-cell${inRange ? ' in-range' : ''}${isAnchor ? ' sel' : ''}`} style={borderStyle}
+                          onClick={(e) => { if (editCell) commitEdit(); if (e.shiftKey) setSelEnd({ col, row }); else goTo(col, row); containerRef.current?.focus() }}
+                          onMouseDown={(e) => { if (e.shiftKey) return; goTo(col, row); setIsDragging(true) }}
+                          onMouseEnter={() => { if (isDragging) setSelEnd({ col, row }) }}
+                          onDoubleClick={() => { goTo(col, row); beginEdit(ref) }}
+                        >
+                          {isEditing ? (
+                            <input ref={editInputRef} className="xls-edit-input" value={editVal} onChange={e => setEditVal(e.target.value)} onKeyDown={handleCellKeyDown} spellCheck={false} />
+                          ) : (
+                            <div className="xls-cell-text" style={{ textAlign: align, fontWeight: cell.bold ? 'bold' : undefined, fontStyle: cell.italic ? 'italic' : undefined, textDecoration: cell.underline ? 'underline' : undefined }}>
+                              {displayVal}
+                            </div>
+                          )}
+                        </td>
+                      )
+                    })}
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* ── Splitter handle ── */}
+        <div className="xls-split-handle" onMouseDown={startSplitDrag} />
+
+        {/* ── Right pane (no row headers, no edit inputs) ── */}
+        <div
+          ref={rightPaneRef}
+          className="xls-grid-wrap"
+          style={{ flex: 1 }}
+          tabIndex={0}
+          onKeyDown={handleKeyDown}
+          onScroll={syncScroll}
+        >
+          <table className="xls-grid">
+            <colgroup>
+              {COLS.map(col => <col key={col} style={{ width: COL_WIDTH }} />)}
+            </colgroup>
+            <thead>
+              <tr style={{ height: ROW_HEIGHT }}>
+                {COLS.map(col => {
+                  const ci = colIdx(col)
+                  return <th key={col} className={`xls-hdr xls-col-hdr${ci >= selRange.minCol && ci <= selRange.maxCol ? ' active' : ''}`}>{col}</th>
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {Array.from({ length: NUM_ROWS }, (_, i) => {
+                const row = i + 1
+                return (
+                  <tr key={row} style={{ height: ROW_HEIGHT }}>
+                    {COLS.map(col => {
+                      const ref = `${col}${row}`
+                      const ci = colIdx(col)
+                      const isAnchor = selRef === ref
+                      const inRange = ci >= selRange.minCol && ci <= selRange.maxCol && row >= selRange.minRow && row <= selRange.maxRow
+                      const cell = sheetData[ref] || {}
+                      const raw = cell.v || ''
+                      const displayVal = getDisplay(ref)
+                      const isNum = raw ? raw.startsWith('=') ? typeof evaluate(raw, getData) === 'number' : !isNaN(parseFloat(raw)) && raw.trim() !== '' : false
+                      const align = cell.align || (isNum ? 'right' : 'left')
+                      const isTopEdge = row === selRange.minRow, isBottomEdge = row === selRange.maxRow
+                      const isLeftEdge = ci === selRange.minCol, isRightEdge = ci === selRange.maxCol
+                      const s = '2px solid #1e7145', h = '1px hidden'
+                      const borderStyle = inRange ? { borderTop: isTopEdge ? s : h, borderBottom: isBottomEdge ? s : h, borderLeft: isLeftEdge ? s : h, borderRight: isRightEdge ? s : h } : {}
+                      return (
+                        <td key={ref} className={`xls-cell${inRange ? ' in-range' : ''}${isAnchor ? ' sel' : ''}`} style={borderStyle}
+                          onClick={(e) => { if (editCell) commitEdit(); if (e.shiftKey) setSelEnd({ col, row }); else goTo(col, row); rightPaneRef.current?.focus() }}
+                          onMouseDown={(e) => { if (e.shiftKey) return; goTo(col, row); setIsDragging(true) }}
+                          onMouseEnter={() => { if (isDragging) setSelEnd({ col, row }) }}
+                          onDoubleClick={() => { goTo(col, row); beginEdit(ref); containerRef.current?.focus() }}
+                        >
+                          <div className="xls-cell-text" style={{ textAlign: align, fontWeight: cell.bold ? 'bold' : undefined, fontStyle: cell.italic ? 'italic' : undefined, textDecoration: cell.underline ? 'underline' : undefined }}>
                             {displayVal}
                           </div>
-                        )}
-                      </td>
-                    )
-                  })}
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
+                        </td>
+                      )
+                    })}
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+
       </div>
 
       {/* Sheet tabs + status bar */}

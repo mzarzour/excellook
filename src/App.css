@@ -129,12 +129,30 @@
   background: #fff;
 }
 
+/* ── Split container ─────────────────────────────────────────────────────── */
+.xls-split-container {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.xls-split-handle {
+  width: 5px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: #c8c6c4;
+  border-left: 1px solid #a19f9d;
+  border-right: 1px solid #a19f9d;
+  transition: background 0.1s;
+}
+.xls-split-handle:hover { background: #0078d4; }
+
 /* ── Grid wrapper ────────────────────────────────────────────────────────── */
 .xls-grid-wrap {
-  flex: 1;
   overflow: auto;
   outline: none;
   background: #fff;
+  position: relative;
 }
 .xls-grid-wrap:focus { outline: none; }
 
@@ -189,11 +207,12 @@
   vertical-align: top;
   overflow: visible;
 }
+.xls-cell.in-range {
+  background: #c7e0f4;
+}
 .xls-cell.sel {
-  outline: 2px solid #217346;
-  outline-offset: -1px;
+  background: #fff;
   z-index: 5;
-  background: #f0f9f4;
 }
 .xls-cell-text {
   display: block;
