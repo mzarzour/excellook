@@ -127,6 +127,12 @@ const evaluate = (formula, getData, depth = 0) => {
     return val === '' ? 0 : val
   })
 
+  // Safety check: strip JSON strings and scientific notation, then reject any
+  // remaining identifiers (function calls, global access, etc.)
+  const withoutStrings = substituted.replace(/"(?:[^"\\]|\\.)*"/g, '0')
+  const withoutScientific = withoutStrings.replace(/\d+[eE][+-]?\d+/g, '0')
+  if (/[a-zA-Z_$]/.test(withoutScientific)) return '#ERROR!'
+
   try {
     // eslint-disable-next-line no-new-func
     return Function('"use strict"; return (' + substituted + ')')()
